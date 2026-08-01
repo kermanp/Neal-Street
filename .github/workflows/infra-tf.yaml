@@ -1,0 +1,149 @@
+name: "Terraform Multi-Environment Deployment"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/deploy.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to manually deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+# Grant required permissions for OpenID Connect (OIDC) token exchange with AWS
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Stage 1: Validation & Code Checks
+  # -------------------------------------------------------------------------
+  validate:
+    name: "Terraform Lint & Validate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.5.0"
+
+      - name: Check Formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize Root Module
+        run: terraform init -backend=false
+
+      - name: Validate Code Syntax
+        run: terraform validate
+
+  # -------------------------------------------------------------------------
+  # Stage 2: Speculative Execution (Plan)
+  # Runs on Pull Requests or Push to Main for BOTH dev & prod
+  # -------------------------------------------------------------------------
+  plan:
+    name: "Plan (${{ matrix.environment }})"
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.5.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select or Create Workspace
+        run: terraform workspace select ${{ matrix.environment }} || terraform workspace new ${{ matrix.environment }}
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -var-file="${{ matrix.environment }}.tfvars" -no-color -out=tfplan-${{ matrix.environment }}
+
+      # Save the binary execution plan for downstream apply steps
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: tfplan-${{ matrix.environment }}
+
+  # -------------------------------------------------------------------------
+  # Stage 3: Deployment (Apply)
+  # Runs ONLY on merge to 'main' branch or manual dispatch
+  # -------------------------------------------------------------------------
+  apply:
+    name: "Apply (${{ matrix.environment }})"
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, prod]
+    
+    # Leverages GitHub Environment rules (allows setting manual approvals on 'prod')
+    environment: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.5.0"
+
+      - name: Download Speculative Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select Workspace
+        run: terraform workspace select ${{ matrix.environment }}
+
+      - name: Terraform Apply
+        run: terraform apply -input=false tfplan-${{ matrix.environment }}
