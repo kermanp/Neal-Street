@@ -20,7 +20,7 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
+  pull-requests: write # Required to comment Terraform Plan on PRs
 
 jobs:
   # -------------------------------------------------------------------------
@@ -46,23 +46,28 @@ jobs:
 
       - name: Init TFLint
         run: tflint --init
+        working-directory: ./infra
 
       - name: Run TFLint Check
         run: tflint --filter=dev.tfvars --var-file=dev.tfvars
+        working-directory: ./infra
         env:
           TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
+        working-directory: ./infra
 
       - name: Initialize Code (No Backend)
         run: terraform init -backend=false
+        working-directory: ./infra
 
       - name: Validate Syntax
         run: terraform validate
+        working-directory: ./infra
 
   # -------------------------------------------------------------------------
-  # Stage 2: Speculative Execution (Plan)
+  # Stage 2: Speculative Execution (Plan) & PR Visibility
   # -------------------------------------------------------------------------
   plan:
     name: "Dev - Terraform Plan"
@@ -86,13 +91,25 @@ jobs:
 
       - name: Terraform Init
         run: terraform init
+        working-directory: ./infra
 
       - name: Select or Create Dev Workspace
         run: terraform workspace select dev || terraform workspace new dev
+        working-directory: ./infra
 
-      - name: Terraform Plan
-        id: plan
+      - name: Terraform Plan (Text Output)
+        id: plan_text
+        run: |
+          echo 'PLAN_STDOUT<<EOF' >> $GITHUB_ENV
+          terraform plan -var-file="dev.tfvars" -no-color >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
+        working-directory: ./infra
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
+
+      - name: Terraform Plan (Artifact File)
         run: terraform plan -var-file="dev.tfvars" -no-color -out=tfplan-dev
+        working-directory: ./infra
         env:
           TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
 
@@ -100,46 +117,28 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-dev
-          path: tfplan-dev
+          path: infra/tfplan-dev
           retention-days: 5
 
-  # -------------------------------------------------------------------------
-  # Stage 3: Deployment (Apply on Merge to Main)
-  # -------------------------------------------------------------------------
-  apply:
-    name: "Dev - Terraform Apply"
-    needs: plan
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    environment: dev
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Comment Terraform Plan on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_DEV }}
-          aws-region: us-east-1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Dev Environment - Terraform Plan 📖
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ">= 1.5.0"
+            <details><summary>Show Plan Output</summary>
 
-      - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-dev
+            \`\`\`hcl
+            ${process.env.PLAN_STDOUT}
+            \`\`\`
 
-      - name: Terraform Init
-        run: terraform init
+            </details>`;
 
-      - name: Select Dev Workspace
-        run: terraform workspace select dev
-
-      - name: Terraform Apply
-        run: terraform apply -input=false tfplan-dev
-        env:
-          TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

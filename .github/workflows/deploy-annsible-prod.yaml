@@ -1,0 +1,59 @@
+name: "Ansible - Prod Configuration"
+
+on:
+  workflow_run:
+    workflows: ["Terraform - Prod Deployment"]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  configure:
+    name: "Prod - Ansible Playbook Execution"
+    # Runs automatically when the Terraform Prod deployment succeeds, or on manual trigger
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: prod # Triggers GitHub Environment protection/review gates if configured
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible & AWS Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: Retrieve SSH Key from AWS Secrets Manager
+        run: |
+          mkdir -p ~/.ssh
+          aws secretsmanager get-secret-value \
+            --secret-id prod/ec2/ssh-private-key \
+            --query SecretString \
+            --output text > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Run Ansible Playbook against Prod Dynamic Inventory
+        run: |
+          ansible-playbook -i inventory/aws_ec2.yml site.yml \
+            --private-key ~/.ssh/id_rsa \
+            --user ubuntu
+        working-directory: ./ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"

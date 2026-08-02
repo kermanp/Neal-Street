@@ -1,0 +1,131 @@
+name: "Terraform - Prod Deployment"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/deploy-prod.yml'
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write # Required to comment Terraform Plan on PRs
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Stage 1: Format, Validate & TFLint Checks
+  # -------------------------------------------------------------------------
+  validate:
+    name: "Prod - Lint & Validate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.5.0"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "latest"
+
+      - name: Init TFLint
+        run: tflint --init
+
+      - name: Run TFLint Check
+        run: tflint --filter=prod.tfvars --var-file=prod.tfvars
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Initialize Code (No Backend)
+        run: terraform init -backend=false
+
+      - name: Validate Syntax
+        run: terraform validate
+
+  # -------------------------------------------------------------------------
+  # Stage 2: Speculative Execution (Plan) & PR Visibility
+  # -------------------------------------------------------------------------
+  plan:
+    name: "Prod - Terraform Plan"
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.5.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select or Create Prod Workspace
+        run: terraform workspace select prod || terraform workspace new prod
+
+      - name: Terraform Plan (Text Output)
+        id: plan_text
+        run: |
+          echo 'PLAN_STDOUT<<EOF' >> $GITHUB_ENV
+          terraform plan -var-file="prod.tfvars" -no-color >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+
+      - name: Terraform Plan (Artifact File)
+        run: terraform plan -var-file="prod.tfvars" -no-color -out=tfplan-prod
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-prod
+          path: tfplan-prod
+          retention-days: 5
+
+      - name: Comment Terraform Plan on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Prod Environment - Terraform Plan 📖
+
+            <details><summary>Show Plan Output</summary>
+
+            \`\`\`hcl
+            ${process.env.PLAN_STDOUT}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
