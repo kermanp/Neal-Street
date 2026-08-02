@@ -7,7 +7,7 @@ data "aws_ami" "ubuntu" {
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"] # EDIT: Exact 64-bit x86 Ubuntu 24.04 image
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"] # Exact 64-bit x86 Ubuntu 24.04 image
   }
 
   filter {
@@ -22,7 +22,7 @@ data "aws_ami" "ubuntu" {
 }
 
 # EC2 Instance Provisioning (Free Tier Compliant)
-resource "aws_instance" "compute_node" {
+resource "aws_instance" "app_server" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type # Default: t3.micro
   subnet_id                   = aws_subnet.public_a.id
@@ -74,10 +74,10 @@ resource "aws_instance" "compute_node" {
 # -----------------------------------------------------------------------------
 output "instance_public_ip" {
   description = "Public IP address of the compute node"
-  value       = aws_instance.compute_node.public_ip
+  value       = aws_instance.app_server.public_ip
 }
 
 output "instance_id" {
   description = "AWS EC2 Instance ID"
-  value       = aws_instance.compute_node.id
+  value       = aws_instance.app_server.id
 }
