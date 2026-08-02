@@ -1,64 +1,46 @@
 variable "aws_region" {
   type        = string
-  default     = "us-east-1"
-  description = "AWS region for deployment"
-}
-
-variable "app_name" {
-  type        = string
-  default     = "rewards-app"
-  description = "Application name prefix"
-}
-
-variable "environment" {
-  type        = string
-  description = "Target deployment environment (dev or prod)"
-
-  validation {
-    condition     = contains(["dev", "prod"], var.environment)
-    error_message = "Environment must be either 'dev' or 'prod'."
-  }
-}
-
-variable "owner" {
-  type        = string
-  default     = "kerman"
-  description = "Resource owner tag"
-}
-
-variable "service" {
-  type        = string
-  default     = "rewards"
-  description = "Service name tag"
-}
-
-variable "cost_center" {
-  type        = string
-  default     = "payments"
-  description = "Cost center tag for billing allocation"
+  default     = "us-east-1" #us-east-1 for Free Tier eligibility
+  description = "AWS region for deployment. Must use us-east-1 or eu-west-1 for Free Tier."
 }
 
 variable "instance_type" {
   type        = string
-  description = "EC2 instance size for the environment"
-}
-
-variable "vpc_cidr" {
-  type        = string
-  description = "CIDR block range for the VPC"
-}
-
-variable "public_subnet_a_cidr" {
-  type        = string
-  description = "CIDR block for Public Subnet A"
-}
-
-variable "public_subnet_b_cidr" {
-  type        = string
-  description = "CIDR block for Public Subnet B"
+  default     = "t3.micro" #  Free Tier eligible instance size
+  description = "EC2 instance size"
 }
 
 variable "aws_account_id" {
   type        = string
-  description = "Target AWS Account ID for the environment"
+  description = "Target AWS Account ID passed dynamically from GitHub Secrets"
+}
+
+variable "allowed_ssh_cidr" {
+  type        = string
+  description = "Allowed IPv4 CIDR block for SSH access on port 22"
+}
+
+variable "app_name" {
+  type        = string
+  default     = "health-app"
+}
+
+variable "environment" {
+  type        = string
+  description = "Target environment (dev or prod)"
+}
+
+variable "vpc_cidr" {
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_subnet_a_cidr" {
+  type        = string
+  default     = "10.0.1.0/24"
+}
+
+variable "public_subnet_b_cidr" {
+  type        = string
+  default     = "10.0.2.0/24"
 }

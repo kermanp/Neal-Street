@@ -1,4 +1,4 @@
-name: "Terraform Multi-Environment Deployment"
+name: "Terraform - Dev Deployment"
 
 on:
   pull_request:
@@ -7,26 +7,16 @@ on:
     paths:
       - '**/*.tf'
       - '**/*.tfvars'
-      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-dev.yml'
   push:
     branches:
       - main
     paths:
       - '**/*.tf'
       - '**/*.tfvars'
-      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-dev.yml'
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to manually deploy'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - prod
 
-# Grant required permissions for OpenID Connect (OIDC) token exchange with AWS
 permissions:
   id-token: write
   contents: read
@@ -34,10 +24,10 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------------------
-  # Stage 1: Validation & Code Checks
+  # Stage 1: Format, Validate & TFLint Checks
   # -------------------------------------------------------------------------
   validate:
-    name: "Terraform Lint & Validate"
+    name: "Dev - Lint & Validate"
     runs-on: ubuntu-latest
 
     steps:
@@ -49,36 +39,44 @@ jobs:
         with:
           terraform_version: ">= 1.5.0"
 
-      - name: Check Formatting
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "latest"
+
+      - name: Init TFLint
+        run: tflint --init
+
+      - name: Run TFLint Check
+        run: tflint --filter=dev.tfvars --var-file=dev.tfvars
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
+
+      - name: Terraform Format Check
         run: terraform fmt -check -recursive
 
-      - name: Initialize Root Module
+      - name: Initialize Code (No Backend)
         run: terraform init -backend=false
 
-      - name: Validate Code Syntax
+      - name: Validate Syntax
         run: terraform validate
 
   # -------------------------------------------------------------------------
   # Stage 2: Speculative Execution (Plan)
-  # Runs on Pull Requests or Push to Main for BOTH dev & prod
   # -------------------------------------------------------------------------
   plan:
-    name: "Plan (${{ matrix.environment }})"
+    name: "Dev - Terraform Plan"
     needs: validate
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: [dev, prod]
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_DEV }}
           aws-region: us-east-1
 
       - name: Setup Terraform
@@ -89,44 +87,40 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: Select or Create Workspace
-        run: terraform workspace select ${{ matrix.environment }} || terraform workspace new ${{ matrix.environment }}
+      - name: Select or Create Dev Workspace
+        run: terraform workspace select dev || terraform workspace new dev
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -var-file="${{ matrix.environment }}.tfvars" -no-color -out=tfplan-${{ matrix.environment }}
+        run: terraform plan -var-file="dev.tfvars" -no-color -out=tfplan-dev
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
 
-      # Save the binary execution plan for downstream apply steps
-      - name: Upload Terraform Plan
+      - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ matrix.environment }}
-          path: tfplan-${{ matrix.environment }}
+          name: tfplan-dev
+          path: tfplan-dev
+          retention-days: 5
 
   # -------------------------------------------------------------------------
-  # Stage 3: Deployment (Apply)
-  # Runs ONLY on merge to 'main' branch or manual dispatch
+  # Stage 3: Deployment (Apply on Merge to Main)
   # -------------------------------------------------------------------------
   apply:
-    name: "Apply (${{ matrix.environment }})"
+    name: "Dev - Terraform Apply"
     needs: plan
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: [dev, prod]
-    
-    # Leverages GitHub Environment rules (allows setting manual approvals on 'prod')
-    environment: ${{ matrix.environment }}
+    environment: dev
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_DEV }}
           aws-region: us-east-1
 
       - name: Setup Terraform
@@ -134,16 +128,18 @@ jobs:
         with:
           terraform_version: ">= 1.5.0"
 
-      - name: Download Speculative Plan Artifact
+      - name: Download Plan Artifact
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-${{ matrix.environment }}
+          name: tfplan-dev
 
       - name: Terraform Init
         run: terraform init
 
-      - name: Select Workspace
-        run: terraform workspace select ${{ matrix.environment }}
+      - name: Select Dev Workspace
+        run: terraform workspace select dev
 
       - name: Terraform Apply
-        run: terraform apply -input=false tfplan-${{ matrix.environment }}
+        run: terraform apply -input=false tfplan-dev
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
