@@ -1,5 +1,9 @@
 🛠️ Prerequisites & Local Setup 
-To run and validate this project locally, ensure you have the following installed:Terraform (>= 1.5.0)TFLint (>= v0.50.0)AWS CLI (configured with appropriate IAM permissions)🚀 Running Locally1. Initialize and Validate InfrastructureNavigate to the infra/ directory:Bashcd infra
+To run and validate this project locally, ensure you have the following installed:
+Terraform (>= 1.5.0)TFLint (>= v0.50.0)
+AWS CLI (configured with appropriate IAM permissions)🚀 Running Locally1. 
+Initialize and Validate Infrastructure
+Navigate to the infra/ directory:Bashcd infra
 Initialize Terraform plugins (without remote state for syntax checks):Bashterraform init -backend=false
 Run formatting checks and linting:Bash# Auto-format HCL files
 terraform fmt -recursive
