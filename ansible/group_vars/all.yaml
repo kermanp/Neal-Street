@@ -1,0 +1,12 @@
+---
+# System & Package Variables
+sys_packages:
+  - curl
+  - git
+  - ufw
+  - nginx
+
+# Application Settings
+app_name: "Health App"
+app_port: 80
+app_user: "www-data"

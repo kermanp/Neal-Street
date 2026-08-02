@@ -1,0 +1,17 @@
+---
+- name: Configure Free Tier Ubuntu Compute Node
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for system APT locks to clear
+      ansible.builtin.raw: systemctl is-system-running
+      register: system_status
+      until: system_status.stdout.find("running") != -1 or system_status.stdout.find("degraded") != -1
+      retries: 30
+      delay: 5
+      changed_when: false
+
+  roles:
+    - role: webserver
