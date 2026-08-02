@@ -44,3 +44,18 @@ variable "public_subnet_b_cidr" {
   type        = string
   default     = "10.0.2.0/24"
 }
+
+variable "service" {
+  type        = string
+  description = "Name of the service or application"
+}
+
+variable "owner" {
+  type        = string
+  description = "Team or individual owner of the infrastructure"
+}
+
+variable "cost_center" {
+  type        = string
+  description = "Cost center tracking code for resource tag allocations"
+}
