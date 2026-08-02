@@ -1,6 +1,6 @@
----
 
-## 2. `SOLUTION.md`
+
+`SOLUTION.md`
 
 ```markdown
 # Solution Architecture & Design Trade-offs
